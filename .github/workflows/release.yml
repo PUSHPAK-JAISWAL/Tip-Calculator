@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - run: npm test
+      - name: Restore or generate Android keystore
+        working-directory: apps/mobile
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> "$GITHUB_ENV"
+            echo "Using repository signing secrets."
+          else
+            echo "ANDROID_KEYSTORE_BASE64 missing — generating a CI debug keystore. Replace this with a real keystore before a public release."
+            keytool -genkeypair -v -keystore "$GITHUB_WORKSPACE/debug-ci.keystore" \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Tip Calculator CI, OU=CI, O=Pushpak, L=NA, ST=NA, C=US"
+            echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/debug-ci.keystore" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=androiddebugkey" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "ANDROID_STORE_PASSWORD=android" >> "$GITHUB_ENV"
+          fi
+      - name: Prebuild Android
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --non-interactive
+      - name: Assemble release APK
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_KEY_ALIAS: ${{ env.ANDROID_KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ env.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ env.ANDROID_STORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file="$ANDROID_KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$ANDROID_STORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          cp "$APK" "$GITHUB_WORKSPACE/artifacts/Tip-Calculator.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts/Tip-Calculator.apk
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build iOS archive when signing secrets exist
+        working-directory: apps/mobile
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISION_PROFILE_BASE64: ${{ secrets.APPLE_PROVISION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          if [ -z "$APPLE_CERTIFICATE_BASE64" ] || [ -z "$APPLE_PROVISION_PROFILE_BASE64" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "iOS signing secrets are not configured. Skipping IPA."
+            echo "Required repository secrets: APPLE_CERTIFICATE_BASE64, APPLE_CERTIFICATE_PASSWORD, APPLE_PROVISION_PROFILE_BASE64, APPLE_TEAM_ID."
+            echo "GitHub-hosted macOS runners can archive an IPA once those secrets exist; they cannot produce a store-ready build without an Apple Developer account."
+            printf 'iOS artifact skipped.\nAdd Apple signing secrets to produce Tip-Calculator.ipa.\n' > "$GITHUB_WORKSPACE/artifacts/IOS-BUILD-SKIPPED.txt"
+            exit 0
+          fi
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 -d > cert.p12
+          echo "$APPLE_PROVISION_PROFILE_BASE64" | base64 -d > profile.mobileprovision
+          security create-keychain -p "" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/"
+          npx expo prebuild --platform ios --non-interactive
+          xcodebuild -workspace ios/Tableside.xcworkspace -scheme Tableside \
+            -configuration Release -sdk iphoneos \
+            -archivePath "$GITHUB_WORKSPACE/Tableside.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" archive
+          xcodebuild -exportArchive -archivePath "$GITHUB_WORKSPACE/Tableside.xcarchive" \
+            -exportPath "$GITHUB_WORKSPACE/artifacts" \
+            -exportOptionsPlist ios/ExportOptions.plist || cp -R "$GITHUB_WORKSPACE/Tableside.xcarchive" "$GITHUB_WORKSPACE/artifacts/"
+          if ls "$GITHUB_WORKSPACE/artifacts"/*.ipa >/dev/null 2>&1; then
+            mv "$GITHUB_WORKSPACE/artifacts"/*.ipa "$GITHUB_WORKSPACE/artifacts/Tip-Calculator.ipa"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-artifact
+          path: artifacts/*
+          if-no-files-found: warn
+
+  publish:
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: collected
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="Sideload/OTA build of Tableside ${TAG} for this repository's own app.
+          Android APK is attached as Tip-Calculator.apk.
+          iOS artifacts appear when Apple signing secrets are configured."
+          FILES=$(find collected -type f)
+          gh release create "$TAG" $FILES --title "Tableside $TAG" --notes "$NOTES"

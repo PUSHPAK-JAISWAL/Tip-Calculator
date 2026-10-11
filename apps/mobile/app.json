@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "Tableside",
+    "slug": "tip-calculator",
+    "scheme": "tableside",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F6F1E8"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pushpak.tipcalculator",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["itms-apps"]
+      }
+    },
+    "android": {
+      "package": "com.pushpak.tipcalculator",
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F1E8",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "usesCleartextTraffic": false
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ],
+      "./modules/apk-updater/plugin.js"
+    ],
+    "extra": {
+      "githubRepo": "PUSHPAK-JAISWAL/Tip-Calculator"
+    }
+  }
+}

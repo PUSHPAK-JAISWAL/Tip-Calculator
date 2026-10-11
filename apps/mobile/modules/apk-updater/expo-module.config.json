@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["com.pushpak.tipcalculator.updater.ApkUpdaterModule"]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "tip-calculator",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Monorepo for Tip Calculator — web, Expo mobile, and distribution site.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @tip/web",
+    "dev:distribution": "npm run dev -w @tip/distribution",
+    "dev:mobile": "npm run start -w @tip/mobile",
+    "build:web": "npm run build -w @tip/web",
+    "build:distribution": "npm run build -w @tip/distribution",
+    "build:sites": "npm run build:distribution && npm run build:web",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
